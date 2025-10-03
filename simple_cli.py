@@ -120,13 +120,25 @@ class WebAPI:
         except:
             return False
 
-    def get_index_data(self):
+    def get_index_data(self, use_local_file=False):
         """
         获取首页信息
 
+        :param use_local_file: 是否优先使用本地文件，默认为False
         :return:
             dict: 首页数据
         """
+        # 如果指定使用本地文件且文件存在，则从本地文件读取
+        if use_local_file and os.path.exists('index_data.json'):
+            try:
+                with open('index_data.json', 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                return data
+            except Exception as e:
+                print(f"读取本地首页信息失败: {e}")
+                # 如果读取本地文件失败，继续尝试从API获取
+        
+        # 从API获取数据
         url = 'https://bbs.uestc.edu.cn/star/api/v1/index'
         params = {
             'global_stat': '1',
@@ -235,6 +247,19 @@ class WebAPI:
             print("\n========== 最新动态 ==========")
             print("暂无最新动态")
         
+        # 不再在首页显示论坛板块
+        print("\n========== 首页信息获取完成 ==========")
+
+    def display_forum_list(self, data):
+        """
+        显示论坛板块列表
+
+        :param data: 首页数据
+        """
+        if not data or data.get('code') != 0:
+            print("获取论坛板块列表失败")
+            return
+
         # 显示板块列表
         forum_list = data['data'].get('forum_list')
         if forum_list:
@@ -246,9 +271,9 @@ class WebAPI:
                 if children:
                     for child in children:
                         print(f"  └─ {child.get('name')} (ID: {child.get('fid')})")
-        
-        print("\n========== 首页信息获取完成 ==========")
-    
+        else:
+            print("暂无论坛板块信息")
+
     def get_top_posts(self):
         """
         通过访问主页获取最新帖子信息
@@ -321,15 +346,98 @@ class WebAPI:
             if os.path.getsize('cookies.json') > 0:
                 print(f"加载cookies失败: {e}")
 
+    def command_mode(self, index_data):
+        """
+        命令模式：输入冒号(:)进入命令模式
+        支持的命令：
+        exit - 退出程序
+        quit - 退出命令模式
+        refresh 或 r - 刷新数据
+        list - 显示论坛板块列表
+        help 或 h - 显示帮助
+        """
+        print("已进入命令模式，输入命令执行操作，输入 'help' 查看帮助")
+        while True:
+            try:
+                command = input("请输入命令: ").strip()
+                
+                if command == 'exit':
+                    print("退出程序")
+                    return 'quit'
+                elif command == 'quit':
+                    print("退出命令模式")
+                    # 返回刷新后的首页内容
+                    return 'exit_command_mode', index_data
+                elif command == 'refresh' or command == 'r':
+                    print("正在刷新数据...")
+                    # 直接通过API获取最新数据，不使用本地文件
+                    fresh_data = self.get_index_data(use_local_file=False)
+                    if fresh_data:
+                        self.display_index_data(fresh_data)
+                        index_data = fresh_data  # 更新数据引用
+                        print("数据刷新完成")
+                    else:
+                        print("刷新失败")
+                elif command == 'list':
+                    # 显示论坛板块列表
+                    self.display_forum_list(index_data)
+                elif command == 'help' or command == 'h':
+                    print("支持的命令:")
+                    print("  exit         - 退出程序")
+                    print("  quit         - 退出命令模式")
+                    print("  refresh 或 r - 刷新数据")
+                    print("  list         - 显示论坛板块列表")
+                    print("  help 或 h    - 显示帮助")
+                elif command == '':
+                    # 空命令，继续提示输入
+                    continue
+                else:
+                    print(f"未知命令: {command}")
+                    print("请输入 'help' 查看可用命令")
+            except KeyboardInterrupt:
+                print("\n\n检测到 Ctrl+C，退出程序")
+                return 'quit'
+            except EOFError:
+                print("\n\n检测到 EOF，退出程序")
+                return 'quit'
+            except Exception as e:
+                print(f"命令执行出错: {e}")
+
 
 def main():
     # 先尝试不带参数初始化
     try:
         api = WebAPI(autoLogin=True)
-        # 登录成功后获取首页信息
-        index_data = api.get_index_data()
+        # 登录成功后获取首页信息，首次登录优先从本地文件读取
+        index_data = api.get_index_data(use_local_file=True)
         if index_data:
             api.display_index_data(index_data)
+            
+            # 等待用户输入
+            print("\n提示：输入冒号(:)进入命令模式")
+            while True:
+                try:
+                    user_input = input()
+                    if user_input.strip() == ':':
+                        result = api.command_mode(index_data)
+                        if result == 'quit':
+                            break
+                        elif result[0] == 'exit_command_mode':
+                            # 退出命令模式，回到主界面并显示更新后的首页内容
+                            index_data = result[1]  # 更新首页数据
+                            api.display_index_data(index_data)  # 显示首页内容
+                            print("\n提示：输入冒号(:)进入命令模式")
+                            continue
+                    else:
+                        # 非命令模式输入，继续等待
+                        print("提示：输入冒号(:)进入命令模式")
+                        continue
+                except KeyboardInterrupt:
+                    print("\n\n检测到 Ctrl+C，退出程序")
+                    break
+                except EOFError:
+                    print("\n\n检测到 EOF，退出程序")
+                    break
     except Exception as e:
         if "Cookie已失效或不存在" in str(e):
             print("Cookie已失效或不存在")
@@ -346,10 +454,36 @@ def main():
                 api = WebAPI(username, password, autoLogin=True)
                 print(f"登录成功！欢迎 {username}")
                 
-                # 登录成功后获取首页信息
-                index_data = api.get_index_data()
+                # 登录成功后获取首页信息，首次登录优先从本地文件读取
+                index_data = api.get_index_data(use_local_file=True)
                 if index_data:
                     api.display_index_data(index_data)
+                    
+                    # 等待用户输入
+                    print("\n提示：输入冒号(:)进入命令模式")
+                    while True:
+                        try:
+                            user_input = input()
+                            if user_input.strip() == ':':
+                                result = api.command_mode(index_data)
+                                if result == 'quit':
+                                    break
+                                elif result[0] == 'exit_command_mode':
+                                    # 退出命令模式，回到主界面并显示更新后的首页内容
+                                    index_data = result[1]  # 更新首页数据
+                                    api.display_index_data(index_data)  # 显示首页内容
+                                    print("\n提示：输入冒号(:)进入命令模式")
+                                    continue
+                            else:
+                                # 非命令模式输入，继续等待
+                                print("提示：输入冒号(:)进入命令模式")
+                                continue
+                        except KeyboardInterrupt:
+                            print("\n\n检测到 Ctrl+C，退出程序")
+                            break
+                        except EOFError:
+                            print("\n\n检测到 EOF，退出程序")
+                            break
             except HepanException as e:
                 print(f"登录失败: {e}")
                 sys.exit(1)

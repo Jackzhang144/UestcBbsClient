@@ -136,3 +136,4 @@ Thumbs.db
 # Sensitive files
 cookies.json
 index_data.json
+/WebAPI.py
